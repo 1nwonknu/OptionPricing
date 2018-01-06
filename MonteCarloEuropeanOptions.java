@@ -1,7 +1,4 @@
 package de.dfine.options;
-import java.util.Arrays;
-
-import de.dfine.options.Options;
 
 
 public abstract class MonteCarloEuropeanOptions {
@@ -32,7 +29,9 @@ public abstract class MonteCarloEuropeanOptions {
 		for(int simulationCounter = 1; simulationCounter <= numberSimulations; simulationCounter++){
 			float gaussRand = boxMueller();
 			//System.out.println(gaussRand);
-			double simulatedPrice = initialPrice * Math.exp(riskFreeRate - 0.5 * volatility * volatility * remainingLifeTime + volatility * Math.sqrt(remainingLifeTime) * gaussRand);
+			double simulatedPrice = initialPrice * 
+					Math.exp(riskFreeRate - 0.5 * volatility * volatility * 
+							remainingLifeTime + volatility * Math.sqrt(remainingLifeTime) * gaussRand);
 			//System.out.println(simulatedPrice);
 			sumPayOffs += payOff(simulatedPrice, strike);
 		}	
@@ -42,6 +41,7 @@ public abstract class MonteCarloEuropeanOptions {
 		return optionPrice;
 	}
 }
+
 
 class MonteCarloEuropenOptionCall extends MonteCarloEuropeanOptions {
 	public float payOff(double simulatedPrice, int strike) {
@@ -56,29 +56,69 @@ class MonteCarloEuropenOptionPut extends MonteCarloEuropeanOptions {
 }
 
 
-abstract class MCbarrier extends MonteCarloEuropeanOptions {
-	public float barrier;
+
+abstract class pathDependentOption extends MonteCarloEuropeanOptions {
 	public int numSteps;
-	
 	
 	public float simulatePrice(float previousPrice, float timeIncrement, float gaussRand){
 		//System.out.println(timeIncrement);
-		float nextPrice = (float) (previousPrice * Math.exp((riskFreeRate - 0.5 * volatility * volatility) * timeIncrement + volatility * gaussRand * Math.sqrt(timeIncrement)));		
+		float nextPrice = (float) (previousPrice * Math.exp((riskFreeRate - 0.5 * volatility * volatility) 
+				* timeIncrement + volatility * gaussRand * Math.sqrt(timeIncrement)));		
 		
 		return nextPrice;
 	}
 	
+	public float[] pathGenerator(){
+		float[] pricePath = new float[numSteps];
+		pricePath[0] = initialPrice;
+		float timeIncrement = remainingLifeTime / numSteps;
+			
+		for (int simulationCounter = 1; simulationCounter < pricePath.length; simulationCounter++) {			
+			float gaussRand = boxMueller();
+			pricePath[simulationCounter] = simulatePriceAnthitetic(pricePath[simulationCounter - 1], timeIncrement, gaussRand);
+		}
+		return pricePath;
+	}
 	
 	public float simulatePriceAnthitetic(float previousPrice, float timeIncrement, float gaussRand){
 		
-		float priceNotAV = (float) (previousPrice * Math.exp((riskFreeRate - 0.5 * volatility * volatility) * timeIncrement + volatility * gaussRand * Math.sqrt(timeIncrement)));		
-		float priceAV =    (float) (previousPrice * Math.exp((riskFreeRate - 0.5 * volatility * volatility) * timeIncrement - volatility * gaussRand * Math.sqrt(timeIncrement)));		
+		float priceNotAV = (float) (previousPrice * Math.exp((riskFreeRate - 0.5 * volatility * volatility) 
+				* timeIncrement + volatility * gaussRand * Math.sqrt(timeIncrement)));		
+		
+		float priceAV =    (float) (previousPrice * Math.exp((riskFreeRate - 0.5 * volatility * volatility) 
+				* timeIncrement - volatility * gaussRand * Math.sqrt(timeIncrement)));		
 		
 		float nextPrice = 0.5f*(priceNotAV + priceAV);		
 		return nextPrice;
 	}	
 	
+	public float pathDependency(float path[]){
+		return 0.5f;
+	}
 	
+	public float computePrice() {
+		
+		float sumPayOffs = 0;
+		for(int simulationCounter = 1; simulationCounter <= numberSimulations; simulationCounter++){
+			float pathDependentPrice = pathDependency(pathGenerator());
+			
+			sumPayOffs += payOff(pathDependentPrice, strike); //Math.max(avrgPrice - strike, 0); // todo: generalize pay off function and pass it as parameter.
+			
+		}	
+		//System.out.println(sumPayOffs);
+		float optionPrice = (float) (sumPayOffs / numberSimulations * Math.exp(-riskFreeRate * remainingLifeTime));
+		//System.out.println("Price Asian Option" + optionPrice);
+		return optionPrice; // computePriceControlVariate(optionPrice);
+	}
+	
+	
+}
+
+
+
+abstract class MCbarrier extends pathDependentOption {
+	public float barrier;
+		
 	public float computePriceControlVariate(float priceWithoutCV){
 		
 		/* V_CV = \hat(V) + (V^* - \hat(V)^*) */
@@ -103,20 +143,7 @@ abstract class MCbarrier extends MonteCarloEuropeanOptions {
 		float nextPrice = priceWithoutCV + (priceCVanalytical - priceCVMC);
 		return nextPrice;
 	}	
-	
-	
-	public float[] pathGenerator(){
-		float[] pricePath = new float[numSteps];
-		pricePath[0] = initialPrice;
-		float timeIncrement = remainingLifeTime / numSteps;
 			
-		for (int simulationCounter = 1; simulationCounter < pricePath.length; simulationCounter++) {			
-			float gaussRand = boxMueller();
-			pricePath[simulationCounter] = simulatePriceAnthitetic(pricePath[simulationCounter - 1], timeIncrement, gaussRand);
-		}
-		return pricePath;
-	}
-	
 	public float computePrice() {
 		
 		float sumPayOffs = 0;
@@ -207,39 +234,33 @@ class MCbarrierUpOutPut extends MCbarrierUpOut {
 }
 
 
-class AsianDiscrete extends MCbarrier {
-	
-	public static float mean(float[] m) {
+abstract class AsianDiscrete extends pathDependentOption {	
+	public float pathDependency(float[] m) {
 	    float sum = 0;
 	    for (int i = 0; i < m.length; i++) {
 	        sum += m[i];
 	    }
 	    return sum / m.length;
-	}
-	
-	public float computePrice() {
-		
-		float sumPayOffs = 0;
-		for(int simulationCounter = 1; simulationCounter <= numberSimulations; simulationCounter++){
-			float avrgPrice = mean(pathGenerator());
-			
-			sumPayOffs += Math.max(avrgPrice - strike, 0); // todo: generalize pay off function and pass it as parameter.
-			
-		}	
-		//System.out.println(sumPayOffs);
-		float optionPrice = (float) (sumPayOffs / numberSimulations * Math.exp(-riskFreeRate * remainingLifeTime));
-		//System.out.println("Price Asian Option" + optionPrice);
-		return optionPrice; // computePriceControlVariate(optionPrice);
-	}
-	
-	
+	}	
 }
 
 
+class AsianDiscreteCall extends AsianDiscrete {
+	public float payOff(double simulatedPrice, int strike) {
+		return (float) (Math.max(simulatedPrice - strike, 0));
+	}	
+}
 
-class LookBack extends MCbarrier {
-	
-	public float find_max_value(float [] pricePath) {
+
+class AsianDiscretePut extends AsianDiscrete {
+	public float payOff(double simulatedPrice, int strike) {
+		return (float) (Math.max(strike - simulatedPrice, 0));
+	}		
+}
+
+
+abstract class LookBack extends pathDependentOption {	
+	public float pathDependency(float [] pricePath) {
 	    float highest = pricePath[0];
 	    for (int index = 1; index < pricePath.length; index ++) {
 	        if (pricePath[index] > highest) {
@@ -248,24 +269,20 @@ class LookBack extends MCbarrier {
 	    }
 	    return highest;
 	}
-	
-	
-	public float computePrice() {
-		
-		float sumPayOffs = 0;
-		for(int simulationCounter = 1; simulationCounter <= numberSimulations; simulationCounter++){
-			float[] pricePath = pathGenerator();
-			float max_price = find_max_value(pricePath);
-			sumPayOffs += Math.max(max_price - strike, 0); // todo: generalize pay off function and pass it as parameter.
-		}	
-		//System.out.println(sumPayOffs);
-		float optionPrice = (float) (sumPayOffs / numberSimulations * Math.exp(-riskFreeRate * remainingLifeTime));
-		//System.out.println("Price with Control Variate" + optionPrice);
-		return optionPrice; // computePriceControlVariate(optionPrice);
-	}
+}
+
+class LookBackCall extends LookBack {
+	public float payOff(double simulatedPrice, int strike) {
+		return (float) (Math.max(simulatedPrice - strike, 0));
+	}	
 }
 
 
+class LookBackPut extends LookBack {
+	public float payOff(double simulatedPrice, int strike) {
+		return (float) (Math.max(strike - simulatedPrice, 0));
+	}		
+}
 
 
 
